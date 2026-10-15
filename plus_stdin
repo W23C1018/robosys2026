@@ -9,5 +9,5 @@ except ValueError:
 
 x = 0
 for line in sys.stdin:
-x += tonum(line)
+x += tonum(line.rstrip())
 print(x)
