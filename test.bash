@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: 2026 Taro Suzuki <s2026xxx@example.com>
+# SPDX-FileCopyrightText: 2026 Shuusuke Inomata
 # SPDX-License-Identifier: BSD-3-Clause
 
 ng () {
@@ -9,7 +9,7 @@ res=1
 
 res=0
 
-out=$(seq 5 | ./plus_stdin)
+out=$(seq 5 | ./plus)
 [ "${out}" = 15 ] || ng "$LINENO"
 
 [ "${res}" = 0 ] && echo OK
