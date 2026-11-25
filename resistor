@@ -1,0 +1,146 @@
+#!/usr/bin/python3
+# SPDX-FileCopyrightText: 2026 Shuusuke Inomata
+# SPDX-License-Identifier: BSD-3-Clause
+
+import math
+import re
+import sys
+
+COLOR_MAP = {
+    "黒": "black", "black": "black", "bk": "black",
+    "茶": "brown", "brown": "brown", "bn": "brown",
+    "赤": "red", "red": "red", "rd": "red",
+    "橙": "orange", "オレンジ": "orange", "orange": "orange", "og": "orange",
+    "黄": "yellow", "yellow": "yellow", "ye": "yellow",
+    "緑": "green", "green": "green", "gn": "green",
+    "青": "blue", "blue": "blue", "bu": "blue",
+    "紫": "violet", "violet": "violet", "purple": "violet", "vt": "violet",
+    "灰": "gray", "gray": "gray", "grey": "gray", "gy": "gray",
+    "白": "white", "white": "white", "wh": "white",
+    "金": "gold", "gold": "gold", "gd": "gold",
+    "銀": "silver", "silver": "silver", "sr": "silver",
+}
+
+DIGIT_MAP = {
+    "black": 0, "brown": 1, "red": 2, "orange": 3, "yellow": 4,
+    "green": 5, "blue": 6, "violet": 7, "gray": 8, "white": 9,
+}
+
+JP_NAME = {
+    "black": "黒", "brown": "茶", "red": "赤", "orange": "橙", "yellow": "黄",
+    "green": "緑", "blue": "青", "violet": "紫", "gray": "灰", "white": "白",
+    "gold": "金", "silver": "銀",
+}
+
+MULTIPLIER_MAP = {
+    "black": 1, "brown": 10, "red": 100, "orange": 1_000, "yellow": 10_000,
+    "green": 100_000, "blue": 1_000_000, "violet": 10_000_000,
+    "gray": 100_000_000, "white": 1_000_000_000,
+    "gold": 0.1, "silver": 0.01,
+}
+
+TOLERANCE_MAP = {
+    "brown": "±1%", "red": "±2%", "green": "±0.5%", "blue": "±0.25%",
+    "violet": "±0.1%", "gray": "±0.05%", "gold": "±5%", "silver": "±10%",
+}
+
+REV_DIGIT = {v: k for k, v in DIGIT_MAP.items()}
+REV_MULT = {
+    -2: "silver", -1: "gold", 0: "black", 1: "brown", 2: "red",
+    3: "orange", 4: "yellow", 5: "green", 6: "blue", 7: "violet",
+    8: "gray", 9: "white",
+}
+
+
+def format_ohms(value: float) -> str:
+    units = [(1_000_000_000, "GΩ"), (1_000_000, "MΩ"), (1_000, "kΩ"), (1, "Ω")]
+    for factor, unit in units:
+        if value >= factor:
+            scaled = value / factor
+            if math.isclose(scaled, round(scaled), rel_tol=1e-9):
+                return f"{int(round(scaled))} {unit}"
+            return f"{scaled:.6g} {unit}"
+    return f"{value:.6g} Ω"
+
+
+def colors_to_value(tokens: list[str]) -> str:
+    if len(tokens) not in (4, 5):
+        raise ValueError("カラーコードは4本または5本で指定してください。")
+    norm = []
+    for t in tokens:
+        key = t.lower()
+        if key not in COLOR_MAP:
+            raise ValueError(f"不明な色名です: {t}")
+        norm.append(COLOR_MAP[key])
+
+    if len(norm) == 4:
+        d1, d2, mult, tol = norm
+        if d1 not in DIGIT_MAP or d2 not in DIGIT_MAP:
+            raise ValueError("有効数字の帯に無効な色が使われています。")
+        if mult not in MULTIPLIER_MAP or tol not in TOLERANCE_MAP:
+            raise ValueError("乗数または許容差の帯に無効な色が使われています。")
+        val = (DIGIT_MAP[d1] * 10 + DIGIT_MAP[d2]) * MULTIPLIER_MAP[mult]
+    else:
+        d1, d2, d3, mult, tol = norm
+        if d1 not in DIGIT_MAP or d2 not in DIGIT_MAP or d3 not in DIGIT_MAP:
+            raise ValueError("有効数字の帯に無効な色が使われています。")
+        if mult not in MULTIPLIER_MAP or tol not in TOLERANCE_MAP:
+            raise ValueError("乗数または許容差の帯に無効な色が使われています。")
+        val = (DIGIT_MAP[d1] * 100 + DIGIT_MAP[d2] * 10 + DIGIT_MAP[d3]) * MULTIPLIER_MAP[mult]
+
+    return f"{format_ohms(val)} ({TOLERANCE_MAP[tol]})"
+
+
+def value_to_colors(text: str) -> str:
+    cleaned = text.strip().replace("Ω", "").replace("ohm", "").replace("OHM", "").strip()
+    m = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)\s*([kKmMgG]?)", cleaned)
+    if not m:
+        raise ValueError(f"不正な入力です: {text}")
+    num = float(m.group(1))
+    prefix = m.group(2).lower()
+    if num <= 0:
+        raise ValueError("抵抗値は正の数で指定してください。")
+
+    scale = {"": 1, "k": 1_000, "m": 1_000_000, "g": 1_000_000_000}[prefix]
+    ohms = num * scale
+
+    exp = math.floor(math.log10(ohms)) - 1
+    sig = round(ohms / (10 ** exp))
+    if sig == 100:
+        sig = 10
+        exp += 1
+
+    if not math.isclose(sig * (10 ** exp), ohms, rel_tol=1e-7):
+        raise ValueError(f"4本帯カラーコード（有効数字2桁）で表現できない値です: {text}")
+    if exp not in REV_MULT:
+        raise ValueError(f"対応範囲外の抵抗値です: {text}")
+
+    d1, d2 = divmod(sig, 10)
+    bands = [REV_DIGIT[d1], REV_DIGIT[d2], REV_MULT[exp], "gold"]
+    return " ".join(JP_NAME[b] for b in bands)
+
+
+def process_line(line: str) -> str:
+    stripped = line.strip()
+    tokens = stripped.split()
+    if len(tokens) == 1 and re.search(r"\d", tokens[0]):
+        return value_to_colors(tokens[0])
+    return colors_to_value(tokens)
+
+
+def main() -> None:
+    lines = [line for line in sys.stdin if line.strip()]
+    if not lines:
+        print("エラー: 標準入力が空です。", file=sys.stderr)
+        sys.exit(1)
+
+    for line in lines:
+        try:
+            print(process_line(line))
+        except ValueError as e:
+            print(f"エラー: {e}", file=sys.stderr)
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
